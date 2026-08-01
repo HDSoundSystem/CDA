@@ -19,40 +19,76 @@ function createWindow() {
 
 app.whenReady().then(createWindow);
 
-// Exécute une commande MCI via un script PS1 temporaire (évite les problèmes d'escaping)
-function runMciCommand(mciCmd) {
+function runPs1(script) {
   return new Promise((resolve, reject) => {
-    const ps1 = path.join(os.tmpdir(), `mci_${Date.now()}.ps1`);
-    const script = `
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-namespace CDROM {
-  public class Commands {
-    [DllImport("winmm.dll")]
-    public static extern Int32 mciSendString(string command, System.Text.StringBuilder buffer, int bufferSize, IntPtr hwndCallback);
-  }
-}
-"@
-$sb = New-Object System.Text.StringBuilder(256)
-[CDROM.Commands]::mciSendString("${mciCmd}", $sb, 256, [IntPtr]::Zero)
-Write-Output $sb.ToString()
-`;
+    const ps1 = path.join(os.tmpdir(), 'cd_' + Date.now() + '.ps1');
     fs.writeFileSync(ps1, script, 'utf8');
     execFile('powershell.exe', ['-ExecutionPolicy', 'Bypass', '-File', ps1], (err, stdout, stderr) => {
-      fs.unlinkSync(ps1);
+      try { fs.unlinkSync(ps1); } catch(e) {}
       if (err) reject(stderr || err.message);
       else resolve(stdout.trim());
     });
   });
 }
 
-ipcMain.handle('cd-command', async (event, command) => {
+function runMciCommand(mciCmd) {
+  const script = [
+    'Add-Type -TypeDefinition @"',
+    'using System;',
+    'using System.Runtime.InteropServices;',
+    'namespace CDROM {',
+    '  public class Commands {',
+    '    [DllImport("winmm.dll")]',
+    '    public static extern Int32 mciSendString(string command, System.Text.StringBuilder buffer, int bufferSize, IntPtr hwndCallback);',
+    '  }',
+    '}',
+    '"@',
+    '$sb = New-Object System.Text.StringBuilder(256)',
+    '[CDROM.Commands]::mciSendString("' + mciCmd + '", $sb, 256, [IntPtr]::Zero)',
+    'Write-Output $sb.ToString()'
+  ].join('\r\n');
+  return runPs1(script);
+}
+
+function ejectDrive(driveLetter) {
+  // Utilise DeviceIoControl IOCTL_STORAGE_EJECT_MEDIA — méthode la plus fiable sur Win10/11
+  const letter = (driveLetter || 'D').replace(':', '').toUpperCase();
+  const script = [
+    'Add-Type -TypeDefinition @"',
+    'using System;',
+    'using System.Runtime.InteropServices;',
+    'using System.IO;',
+    'namespace Eject {',
+    '  public class Drive {',
+    '    [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Auto)]',
+    '    public static extern IntPtr CreateFile(string lpFileName, uint dwDesiredAccess,',
+    '      uint dwShareMode, IntPtr lpSecurityAttributes, uint dwCreationDisposition,',
+    '      uint dwFlagsAndAttributes, IntPtr hTemplateFile);',
+    '    [DllImport("kernel32.dll", SetLastError=true)]',
+    '    public static extern bool DeviceIoControl(IntPtr hDevice, uint dwIoControlCode,',
+    '      IntPtr lpInBuffer, uint nInBufferSize, IntPtr lpOutBuffer, uint nOutBufferSize,',
+    '      out uint lpBytesReturned, IntPtr lpOverlapped);',
+    '    [DllImport("kernel32.dll", SetLastError=true)]',
+    '    public static extern bool CloseHandle(IntPtr hObject);',
+    '    public static void Eject(string drive) {',
+    '      IntPtr h = CreateFile(@"\\\\.\\" + drive, 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);',
+    '      if (h == new IntPtr(-1)) throw new Exception("Cannot open drive: " + drive);',
+    '      uint bytes = 0;',
+    '      DeviceIoControl(h, 0x2D4808, IntPtr.Zero, 0, IntPtr.Zero, 0, out bytes, IntPtr.Zero);',
+    '      CloseHandle(h);',
+    '    }',
+    '  }',
+    '}',
+    '"@',
+    '[Eject.Drive]::Eject("' + letter + ':")',
+    'Write-Output "ok"'
+  ].join('\r\n');
+  return runPs1(script);
+}
+
+ipcMain.handle('cd-command', async (event, command, arg) => {
   try {
     switch (command) {
-      case 'open':
-        await runMciCommand('open cdaudio alias cd shareable');
-        return { ok: true };
       case 'play':
         await runMciCommand('open cdaudio alias cd shareable');
         await runMciCommand('play cd');
@@ -64,10 +100,10 @@ ipcMain.handle('cd-command', async (event, command) => {
         await runMciCommand('stop cd');
         return { ok: true };
       case 'eject':
-        await runMciCommand('open cdaudio alias cd shareable');
-        await runMciCommand('set cd door open');
+        await ejectDrive(arg || 'D');
         return { ok: true };
       case 'status':
+        await runMciCommand('open cdaudio alias cd shareable');
         const status = await runMciCommand('status cd mode');
         return { ok: true, value: status };
       default:

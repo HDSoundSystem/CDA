@@ -1,7 +1,7 @@
 const trackInfo = document.getElementById('track-info');
 
-async function send(cmd) {
-  const result = await window.electronAPI.cdCommand(cmd);
+async function send(cmd, arg) {
+  const result = await window.electronAPI.cdCommand(cmd, arg);
   if (!result.ok) {
     trackInfo.innerText = 'Erreur : ' + result.error;
   }
@@ -25,7 +25,7 @@ document.getElementById('btn-stop').addEventListener('click', async () => {
 
 document.getElementById('btn-eject').addEventListener('click', async () => {
   trackInfo.innerText = 'Ouverture du tiroir...';
-  await send('eject');
+  await send('eject', 'F'); // Change 'D' si ton lecteur CD est sur une autre lettre
 });
 
 document.getElementById('btn-prev').addEventListener('click', () => {
