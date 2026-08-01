@@ -1,5 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  ejectCd: () => ipcRenderer.send('eject-cd')
+  cdCommand: (cmd) => ipcRenderer.invoke('cd-command', cmd)
 });
