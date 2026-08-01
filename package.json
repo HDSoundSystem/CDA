@@ -1,0 +1,24 @@
+{
+  "name": "cd-player-electron",
+  "version": "1.0.0",
+  "description": "CD Player for Windows",
+  "homepage": "https://github.com/HDSoundSystem/CDA#readme",
+  "bugs": {
+    "url": "https://github.com/HDSoundSystem/CDA/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HDSoundSystem/CDA.git"
+  },
+  "license": "MIT",
+  "author": "Yohann Zaoui",
+  "type": "commonjs",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^31.7.7"
+  },
+  "keywords": []
+}
