@@ -4,10 +4,13 @@ const { execFile } = require('child_process');
 const os = require('os');
 const fs = require('fs');
 
+let DRIVE = 'F';
+let cdOpen = false;
+
 function createWindow() {
   const mainWindow = new BrowserWindow({
-    width: 600,
-    height: 400,
+    width: 650,
+    height: 540,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -31,7 +34,7 @@ function runPs1(script) {
   });
 }
 
-function runMciCommand(mciCmd) {
+function runMci(cmd) {
   const script = [
     'Add-Type -TypeDefinition @"',
     'using System;',
@@ -43,21 +46,45 @@ function runMciCommand(mciCmd) {
     '  }',
     '}',
     '"@',
-    '$sb = New-Object System.Text.StringBuilder(256)',
-    '[CDROM.Commands]::mciSendString("' + mciCmd + '", $sb, 256, [IntPtr]::Zero)',
+    '$sb = New-Object System.Text.StringBuilder(512)',
+    '[CDROM.Commands]::mciSendString("' + cmd + '", $sb, 512, [IntPtr]::Zero)',
     'Write-Output $sb.ToString()'
   ].join('\r\n');
   return runPs1(script);
 }
 
-function ejectDrive(driveLetter) {
-  // Utilise DeviceIoControl IOCTL_STORAGE_EJECT_MEDIA — méthode la plus fiable sur Win10/11
-  const letter = (driveLetter || 'D').replace(':', '').toUpperCase();
+// Ouvre le CD une seule fois, sans spécifier la lettre (Windows trouve automatiquement)
+async function openCd() {
+  if (cdOpen) return;
+  try {
+    await runMci('open cdaudio alias cd shareable');
+    await runMci('set cd time format msf');
+    cdOpen = true;
+  } catch(e) {
+    cdOpen = false;
+    throw e;
+  }
+}
+
+async function closeCd() {
+  try { await runMci('close cd'); } catch(e) {}
+  cdOpen = false;
+}
+
+// Convertit "mm:ss:ff" en secondes
+function msfToSeconds(t) {
+  if (!t) return 0;
+  const parts = t.trim().split(':').map(Number);
+  if (parts.length === 3) return parts[0] * 60 + parts[1]; // ignore frames
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return parseInt(t) || 0;
+}
+
+function ejectDrive() {
   const script = [
     'Add-Type -TypeDefinition @"',
     'using System;',
     'using System.Runtime.InteropServices;',
-    'using System.IO;',
     'namespace Eject {',
     '  public class Drive {',
     '    [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Auto)]',
@@ -72,7 +99,7 @@ function ejectDrive(driveLetter) {
     '    public static extern bool CloseHandle(IntPtr hObject);',
     '    public static void Eject(string drive) {',
     '      IntPtr h = CreateFile(@"\\\\.\\" + drive, 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);',
-    '      if (h == new IntPtr(-1)) throw new Exception("Cannot open drive: " + drive);',
+    '      if (h == new IntPtr(-1)) throw new Exception("Cannot open drive");',
     '      uint bytes = 0;',
     '      DeviceIoControl(h, 0x2D4808, IntPtr.Zero, 0, IntPtr.Zero, 0, out bytes, IntPtr.Zero);',
     '      CloseHandle(h);',
@@ -80,7 +107,7 @@ function ejectDrive(driveLetter) {
     '  }',
     '}',
     '"@',
-    '[Eject.Drive]::Eject("' + letter + ':")',
+    '[Eject.Drive]::Eject("' + DRIVE + ':")',
     'Write-Output "ok"'
   ].join('\r\n');
   return runPs1(script);
@@ -89,23 +116,77 @@ function ejectDrive(driveLetter) {
 ipcMain.handle('cd-command', async (event, command, arg) => {
   try {
     switch (command) {
+
+      case 'set-drive':
+        await closeCd();
+        DRIVE = (arg || 'F').replace(':', '').toUpperCase();
+        return { ok: true, drive: DRIVE };
+
+      case 'get-drive':
+        return { ok: true, drive: DRIVE };
+
       case 'play':
-        await runMciCommand('open cdaudio alias cd shareable');
-        await runMciCommand('play cd');
+        await openCd();
+        if (arg !== undefined) {
+          await runMci('play cd from ' + arg);
+        } else {
+          await runMci('play cd');
+        }
         return { ok: true };
+
       case 'pause':
-        await runMciCommand('pause cd');
+        await runMci('pause cd');
         return { ok: true };
+
+      case 'resume':
+        await runMci('resume cd');
+        return { ok: true };
+
       case 'stop':
-        await runMciCommand('stop cd');
+        await runMci('stop cd');
         return { ok: true };
+
       case 'eject':
-        await ejectDrive(arg || 'D');
+        await closeCd();
+        await ejectDrive();
         return { ok: true };
+
+      case 'prev':
+        await openCd();
+        const curPrev   = await runMci('status cd current track');
+        const trackPrev = Math.max(1, parseInt(curPrev) - 1);
+        await runMci('play cd from ' + trackPrev);
+        return { ok: true, track: trackPrev };
+
+      case 'next':
+        await openCd();
+        const curNext   = await runMci('status cd current track');
+        const totalNext = await runMci('status cd number of tracks');
+        const trackNext = Math.min(parseInt(totalNext), parseInt(curNext) + 1);
+        await runMci('play cd from ' + trackNext);
+        return { ok: true, track: trackNext };
+
+      case 'volume':
+        const vol = Math.round((arg / 100) * 1000);
+        await runMci('setaudio cd volume to ' + vol);
+        return { ok: true };
+
       case 'status':
-        await runMciCommand('open cdaudio alias cd shareable');
-        const status = await runMciCommand('status cd mode');
-        return { ok: true, value: status };
+        await openCd();
+        const mode      = await runMci('status cd mode');
+        const track     = await runMci('status cd current track');
+        const numTracks = await runMci('status cd number of tracks');
+        const posRaw    = await runMci('status cd position');
+        const tLenRaw   = await runMci('status cd length track ' + (parseInt(track) || 1));
+        return {
+          ok: true,
+          mode,
+          track:       parseInt(track) || 1,
+          numTracks:   parseInt(numTracks) || 0,
+          position:    msfToSeconds(posRaw),
+          trackLength: msfToSeconds(tLenRaw)
+        };
+
       default:
         return { ok: false, error: 'Commande inconnue' };
     }

@@ -1,25 +1,59 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <title>Lecteur CD Audio</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <title>Lecteur CD Audio</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="player-container">
-        <h1>Lecteur CD Audio</h1>
-        <div class="display">
-            <p id="track-info">Insérez un CD audio</p>
-        </div>
-        <div class="controls">
-            <button id="btn-prev">⏮</button>
-            <button id="btn-play">▶ Lecture</button>
-            <button id="btn-pause">⏸ Pause</button>
-            <button id="btn-stop">⏹ Stop</button>
-            <button id="btn-next">⏭</button>
-            <button id="btn-eject">⏏ Éjecter</button>
-        </div>
+  <div class="player-container">
+
+    <div class="header">
+      <h1>Lecteur CD Audio</h1>
+      <div class="drive-row">
+        <label for="drive-select">Lecteur</label>
+        <select id="drive-select">
+          <option>C:</option>
+          <option>D:</option>
+          <option>E:</option>
+          <option selected>F:</option>
+          <option>G:</option>
+          <option>H:</option>
+        </select>
+      </div>
     </div>
-    <script src="renderer.js"></script>
+
+    <div class="display">
+      <div class="track-info">
+        <span class="label">Piste</span>
+        <span id="track-num">--</span>
+        <span class="sep">/</span>
+        <span id="track-total">--</span>
+      </div>
+      <div class="time-info">
+        <span id="time-elapsed">0:00</span>
+        <span class="time-sep"> / </span>
+        <span id="time-total">0:00</span>
+      </div>
+      <div id="status-text">Insérez un CD audio</div>
+    </div>
+
+    <div class="controls">
+      <button id="btn-prev" title="Piste précédente">⏮</button>
+      <button id="btn-play" title="Lecture">▶</button>
+      <button id="btn-pause" title="Pause">⏸</button>
+      <button id="btn-stop" title="Stop">⏹</button>
+      <button id="btn-next" title="Piste suivante">⏭</button>
+      <button id="btn-eject" title="Éjecter">⏏</button>
+    </div>
+
+    <div class="volume-row">
+      <label for="volume-slider">🔊</label>
+      <input type="range" id="volume-slider" min="0" max="100" value="80">
+      <span id="volume-value">80%</span>
+    </div>
+
+  </div>
+  <script src="renderer.js"></script>
 </body>
 </html>
