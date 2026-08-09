@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Lecteur CD Audio</title>
+  <title>CD Audio Player</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -10,9 +10,9 @@
   <div class="player-container">
 
     <div class="header">
-      <h1>Lecteur CD Audio</h1>
+      <h1>CD Audio Player</h1>
       <div class="drive-row">
-        <label for="drive-select">Lecteur</label>
+        <label for="drive-select">Drive</label>
         <select id="drive-select">
           <option>C:</option>
           <option>D:</option>
@@ -26,7 +26,7 @@
 
     <div class="display">
       <div class="track-info">
-        <span class="label">Piste</span>
+        <span class="label">Track</span>
         <span id="track-num">--</span>
         <span class="sep">/</span>
         <span id="track-total">--</span>
@@ -36,16 +36,16 @@
         <span class="time-sep"> / </span>
         <span id="time-total">0:00</span>
       </div>
-      <div id="status-text">Insérez un CD audio</div>
+      <div id="status-text">Insert a CD</div>
     </div>
 
     <div class="controls">
-      <button id="btn-prev"  title="Piste précédente"><i class="fa-solid fa-backward-step"></i></button>
-      <button id="btn-play"  title="Lecture"><i class="fa-solid fa-play"></i></button>
+      <button id="btn-prev"  title="Previous track"><i class="fa-solid fa-backward-step"></i></button>
+      <button id="btn-play"  title="Play"><i class="fa-solid fa-play"></i></button>
       <button id="btn-pause" title="Pause"><i class="fa-solid fa-pause"></i></button>
       <button id="btn-stop"  title="Stop"><i class="fa-solid fa-stop"></i></button>
-      <button id="btn-next"  title="Piste suivante"><i class="fa-solid fa-forward-step"></i></button>
-      <button id="btn-eject" title="Éjecter"><i class="fa-solid fa-eject"></i></button>
+      <button id="btn-next"  title="Next track"><i class="fa-solid fa-forward-step"></i></button>
+      <button id="btn-eject" title="Eject"><i class="fa-solid fa-eject"></i></button>
     </div>
 
     <div class="volume-row">

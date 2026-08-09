@@ -6,23 +6,25 @@ const fs = require('fs');
 
 let DRIVE = 'F';
 
-// ─── PowerShell bridge persistant ──────────────────────────────────────────
-const BRIDGE_SCRIPT = String.raw`
+// ─── PowerShell persistent bridge ──────────────────────────────────────────
+const BRIDGE_SCRIPT = `
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
-namespace MCI {
-  public class Api {
+namespace Bridge {
+  public class MCI {
     [DllImport("winmm.dll", CharSet = CharSet.Auto)]
     public static extern int mciSendString(string cmd, System.Text.StringBuilder ret, int retLen, IntPtr cb);
   }
 }
-"@
+"@ -Language CSharp
+
 function Invoke-MCI($cmd) {
   $sb = New-Object System.Text.StringBuilder 512
-  $err = [MCI.Api]::mciSendString($cmd, $sb, 512, [IntPtr]::Zero)
+  $err = [Bridge.MCI]::mciSendString($cmd, $sb, 512, [IntPtr]::Zero)
   return @{ err = $err; val = $sb.ToString() }
 }
+
 while ($true) {
   $line = [Console]::ReadLine()
   if ($null -eq $line) { break }
@@ -30,8 +32,8 @@ while ($true) {
   if ($line -eq '') { continue }
   try {
     $req = $line | ConvertFrom-Json
-    $r = Invoke-MCI $req.cmd
-    Write-Output ((@{ id = $req.id; err = $r.err; val = $r.val }) | ConvertTo-Json -Compress)
+      $r = Invoke-MCI $req.cmd
+      Write-Output ((@{ id = $req.id; err = $r.err; val = $r.val }) | ConvertTo-Json -Compress)
   } catch {
     Write-Output ((@{ id = 0; err = -1; val = $_.ToString() }) | ConvertTo-Json -Compress)
   }
@@ -39,9 +41,9 @@ while ($true) {
 }
 `;
 
-let psProc = null;
-let pendingCalls = {};
-let callId = 0;
+let psProc   = null;
+let pending  = {};
+let callId   = 0;
 let psBuffer = '';
 
 function startBridge() {
@@ -51,6 +53,7 @@ function startBridge() {
   psProc = spawn('powershell.exe', [
     '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath
   ], { stdio: ['pipe', 'pipe', 'pipe'] });
+
   psProc.stdout.on('data', (chunk) => {
     psBuffer += chunk.toString();
     let nl;
@@ -60,16 +63,17 @@ function startBridge() {
       if (!line) continue;
       try {
         const res = JSON.parse(line);
-        const cb = pendingCalls[res.id];
-        if (cb) { delete pendingCalls[res.id]; cb(res); }
+        const cb = pending[res.id];
+        if (cb) { delete pending[res.id]; cb(res); }
       } catch(e) {}
     }
   });
+
   psProc.on('exit', () => {
     psProc = null;
-    for (const id in pendingCalls) {
-      pendingCalls[id]({ err: -1, val: 'Bridge exited' });
-      delete pendingCalls[id];
+    for (const id in pending) {
+      pending[id]({ err: -1, val: 'Bridge exited' });
+      delete pending[id];
     }
   });
 }
@@ -78,18 +82,27 @@ function mci(cmd) {
   return new Promise((resolve, reject) => {
     if (!psProc) { reject(new Error('Bridge not started')); return; }
     const id = ++callId;
-    pendingCalls[id] = (res) => {
+    pending[id] = (res) => {
       if (res.err !== 0) reject(new Error('MCI ' + res.err + ': ' + res.val));
       else resolve(res.val.trim());
     };
-    psProc.stdin.write(JSON.stringify({ id, cmd }) + '\n');
+    psProc.stdin.write(JSON.stringify({ id, type: 'mci', cmd }) + '\n');
   });
 }
 
-// ─── Eject ─────────────────────────────────────────────────────────────────
+function sendVolume(level) {
+  // nircmd setsysvolume: 0-65535
+  const val = Math.round((Math.max(0, Math.min(100, level)) / 100) * 65535);
+  const nircmd = path.join(__dirname, 'nircmd.exe');
+  return new Promise((resolve) => {
+    execFile(nircmd, ['setsysvolume', String(val)], () => resolve());
+  });
+}
+
+// ─── Eject (one-shot PS) ───────────────────────────────────────────────────
 function ejectDrive(letter) {
   return new Promise((resolve, reject) => {
-    const script = [
+    const lines = [
       'Add-Type -TypeDefinition @"',
       'using System; using System.Runtime.InteropServices;',
       'namespace Ej {',
@@ -110,9 +123,9 @@ function ejectDrive(letter) {
       '"@',
       '[Ej.D]::Eject("' + letter + ':")',
       'Write-Output "ok"'
-    ].join('\r\n');
+    ];
     const ps1 = path.join(os.tmpdir(), 'eject_' + Date.now() + '.ps1');
-    fs.writeFileSync(ps1, script, 'utf8');
+    fs.writeFileSync(ps1, lines.join('\r\n'), 'utf8');
     execFile('powershell.exe', ['-ExecutionPolicy', 'Bypass', '-File', ps1], (err, stdout, stderr) => {
       try { fs.unlinkSync(ps1); } catch(e) {}
       if (err) reject(new Error(stderr || err.message));
@@ -121,64 +134,7 @@ function ejectDrive(letter) {
   });
 }
 
-// ─── Volume CoreAudio ───────────────────────────────────────────────────────
-function setVolume(percent) {
-  return new Promise((resolve) => {
-    const vol = (Math.max(0, Math.min(100, percent)) / 100).toFixed(4);
-    const lines = [
-      'Add-Type -TypeDefinition @"',
-      'using System;',
-      'using System.Runtime.InteropServices;',
-      '[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]',
-      '[ClassInterface(ClassInterfaceType.None)]',
-      'class MMDeviceEnumeratorCom {}',
-      '[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]',
-      'interface IMMDeviceEnumerator {',
-      '  int NotImpl1();',
-      '  int GetDefaultAudioEndpoint(int df, int role, out IMMDevice ppEndpoint);',
-      '}',
-      '[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]',
-      'interface IMMDevice {',
-      '  int Activate(ref Guid id, int clsCtx, IntPtr p, out IAudioEndpointVolume aev);',
-      '  int NotImpl2(); int NotImpl3();',
-      '}',
-      '[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]',
-      'interface IAudioEndpointVolume {',
-      '  int NotImpl1(); int NotImpl2();',
-      '  int SetMasterVolumeLevelScalar(float fLevel, Guid pguidEventContext);',
-      '  int NotImpl3();',
-      '  int GetMasterVolumeLevelScalar(out float pfLevel);',
-      '  int NotImpl4(); int NotImpl5(); int NotImpl6(); int NotImpl7();',
-      '  int GetChannelCount(out uint pnChannelCount);',
-      '}',
-      'public static class VolCtrl {',
-      '  public static void Set(float level) {',
-      '    var e = (IMMDeviceEnumerator)new MMDeviceEnumeratorCom();',
-      '    IMMDevice d;',
-      '    e.GetDefaultAudioEndpoint(0, 1, out d);',
-      '    var g = new Guid("5CDF2C82-841E-4546-9722-0CF74078229A");',
-      '    IAudioEndpointVolume aev;',
-      '    d.Activate(ref g, 23, IntPtr.Zero, out aev);',
-      '    aev.SetMasterVolumeLevelScalar(level, Guid.Empty);',
-      '  }',
-      '}',
-      '"@ -Language CSharp',
-      '[VolCtrl]::Set([float]' + vol + ')',
-      'Write-Output "ok"'
-    ];
-    const script = lines.join('\r\n');
-    const ps1 = path.join(os.tmpdir(), 'vol_' + Date.now() + '.ps1');
-    fs.writeFileSync(ps1, script, 'utf8');
-    execFile('powershell.exe', ['-ExecutionPolicy', 'Bypass', '-File', ps1], () => {
-      try { fs.unlinkSync(ps1); } catch(e) {}
-      resolve();
-    });
-  });
-}
-
-
 // ─── Helpers ───────────────────────────────────────────────────────────────
-// MSF = mm:ss:ff → secondes
 function msfToSec(t) {
   if (!t) return 0;
   const p = t.trim().split(':').map(Number);
@@ -206,7 +162,7 @@ async function playTrack(trackNum) {
   await mci('play cd from ' + pos);
 }
 
-// ─── Fenêtre ───────────────────────────────────────────────────────────────
+// ─── Window ────────────────────────────────────────────────────────────────
 function createWindow() {
   startBridge();
   const win = new BrowserWindow({
@@ -239,11 +195,8 @@ ipcMain.handle('cd-command', async (event, command, arg) => {
 
       case 'play':
         await ensureOpen();
-        if (arg !== undefined) {
-          await playTrack(arg);
-        } else {
-          await mci('play cd');
-        }
+        if (arg !== undefined) await playTrack(arg);
+        else await mci('play cd');
         return { ok: true };
 
       case 'pause':
@@ -280,24 +233,19 @@ ipcMain.handle('cd-command', async (event, command, arg) => {
         return { ok: true, track: nx };
 
       case 'volume':
-        await setVolume(arg);
+        await sendVolume(arg);
         return { ok: true };
 
       case 'status':
         await ensureOpen();
-        const mode  = await mci('status cd mode');
-        const trk   = await mci('status cd current track');
-        const total = await mci('status cd number of tracks');
+        const mode   = await mci('status cd mode');
+        const trk    = await mci('status cd current track');
+        const total  = await mci('status cd number of tracks');
         const trkNum = parseInt(trk) || 1;
-
-        // Position absolue sur le CD et position de début de piste
-        const posAbs      = await mci('status cd position');
+        const posAbs        = await mci('status cd position');
         const posTrackStart = await mci('status cd position track ' + trkNum);
-        const tlen        = await mci('status cd length track ' + trkNum);
-
-        // Temps écoulé dans la piste = position absolue − début de piste
+        const tlen          = await mci('status cd length track ' + trkNum);
         const elapsed = Math.max(0, msfToSec(posAbs) - msfToSec(posTrackStart));
-
         return {
           ok: true,
           mode,
@@ -313,7 +261,7 @@ ipcMain.handle('cd-command', async (event, command, arg) => {
         return { ok: true, numTracks: parseInt(tot2) || 0 };
 
       default:
-        return { ok: false, error: 'Commande inconnue' };
+        return { ok: false, error: 'Unknown command' };
     }
   } catch (e) {
     if (e.message && e.message.includes('MCI')) cdReady = false;

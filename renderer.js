@@ -7,8 +7,8 @@ const volumeSlider = document.getElementById('volume-slider');
 const volumeValue  = document.getElementById('volume-value');
 const driveSelect  = document.getElementById('drive-select');
 
-let pollInterval = null;
-let currentMode  = '';
+let pollInterval  = null;
+let currentMode   = '';
 let lastNumTracks = 0;
 
 function fmt(sec) {
@@ -19,12 +19,10 @@ function fmt(sec) {
 async function send(cmd, arg) {
   try {
     const result = await window.electronAPI.cdCommand(cmd, arg);
-    if (result && !result.ok) {
-      statusText.innerText = 'Erreur : ' + result.error;
-    }
+    if (result && !result.ok) statusText.innerText = 'Error: ' + result.error;
     return result || { ok: false };
   } catch(e) {
-    statusText.innerText = 'Erreur IPC';
+    statusText.innerText = 'IPC error';
     return { ok: false };
   }
 }
@@ -40,12 +38,10 @@ function resetDisplay() {
 async function poll() {
   const r = await send('status');
   if (!r.ok) return;
-
   currentMode = r.mode;
 
-  // Détection insertion CD (numTracks passe de 0 à N)
   if (r.numTracks > 0 && lastNumTracks === 0) {
-    statusText.innerText = r.numTracks + ' piste(s) détectée(s)';
+    statusText.innerText = r.numTracks + ' track(s) detected';
   }
   lastNumTracks = r.numTracks;
 
@@ -54,18 +50,18 @@ async function poll() {
   timeElapsed.innerText = r.position    > 0 ? fmt(r.position)    : '0:00';
   timeTotal.innerText   = r.trackLength > 0 ? fmt(r.trackLength) : '0:00';
 
-  if      (r.mode === 'playing') statusText.innerText = 'Lecture en cours';
-  else if (r.mode === 'paused')  statusText.innerText = 'Pause';
-  else if (r.mode === 'stopped') statusText.innerText = 'Arrêté';
-  else if (r.mode === 'open')    statusText.innerText = 'Tiroir ouvert';
-  else if (r.numTracks > 0)     statusText.innerText = 'CD prêt — ' + r.numTracks + ' pistes';
-  else                           statusText.innerText = 'Aucun CD détecté';
+  if      (r.mode === 'playing') statusText.innerText = 'Playing';
+  else if (r.mode === 'paused')  statusText.innerText = 'Paused';
+  else if (r.mode === 'stopped') statusText.innerText = 'Stopped';
+  else if (r.mode === 'open')    statusText.innerText = 'Tray open';
+  else if (r.numTracks > 0)     statusText.innerText = 'CD ready — ' + r.numTracks + ' tracks';
+  else                           statusText.innerText = 'No CD detected';
 }
 
 function startPoll() {
   if (pollInterval) return;
   pollInterval = setInterval(poll, 1000);
-  poll(); // poll immédiat
+  poll();
 }
 
 function stopPoll() {
@@ -73,20 +69,19 @@ function stopPoll() {
   pollInterval = null;
 }
 
-// Changement de lecteur
 driveSelect.addEventListener('change', async () => {
   stopPoll();
   resetDisplay();
   const letter = driveSelect.value.replace(':', '');
   const r = await send('set-drive', letter);
   if (r.ok) {
-    statusText.innerText = 'Lecteur : ' + r.drive + ':';
+    statusText.innerText = 'Drive: ' + r.drive + ':';
     startPoll();
   }
 });
 
 document.getElementById('btn-play').addEventListener('click', async () => {
-  statusText.innerText = 'Démarrage...';
+  statusText.innerText = 'Starting...';
   const r = await send('play');
   if (r.ok) startPoll();
 });
@@ -96,42 +91,41 @@ document.getElementById('btn-pause').addEventListener('click', async () => {
     await send('resume');
   } else {
     await send('pause');
-    statusText.innerText = 'Pause';
+    statusText.innerText = 'Paused';
   }
 });
 
 document.getElementById('btn-stop').addEventListener('click', async () => {
   await send('stop');
-  statusText.innerText  = 'Arrêté';
+  statusText.innerText  = 'Stopped';
   timeElapsed.innerText = '0:00';
 });
 
 document.getElementById('btn-prev').addEventListener('click', async () => {
   const r = await send('prev');
-  if (r.ok) { statusText.innerText = 'Piste ' + r.track; startPoll(); }
+  if (r.ok) { statusText.innerText = 'Track ' + r.track; startPoll(); }
 });
 
 document.getElementById('btn-next').addEventListener('click', async () => {
   const r = await send('next');
-  if (r.ok) { statusText.innerText = 'Piste ' + r.track; startPoll(); }
+  if (r.ok) { statusText.innerText = 'Track ' + r.track; startPoll(); }
 });
 
 document.getElementById('btn-eject').addEventListener('click', async () => {
   stopPoll();
-  statusText.innerText = 'Éjection...';
+  statusText.innerText = 'Ejecting...';
   await send('eject');
   resetDisplay();
-  statusText.innerText = 'Tiroir ouvert';
+  statusText.innerText = 'Tray open';
 });
 
-// Volume
-let volTimer = null;
+// Volume — send immediately on every input event
 volumeSlider.addEventListener('input', () => {
   const v = parseInt(volumeSlider.value);
   volumeValue.innerText = v + '%';
-  clearTimeout(volTimer);
-  volTimer = setTimeout(() => send('volume', v), 300);
+  send('volume', v);
 });
 
-// Démarrage : poll immédiat pour détecter un CD déjà présent
+// Init
 startPoll();
+send('volume', parseInt(volumeSlider.value));
