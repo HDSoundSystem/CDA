@@ -6,7 +6,7 @@ const fs = require('fs');
 
 let DRIVE = 'F';
 
-// ─── Processus PowerShell persistant ───────────────────────────────────────
+// ─── PowerShell bridge persistant ──────────────────────────────────────────
 const BRIDGE_SCRIPT = String.raw`
 Add-Type -TypeDefinition @"
 using System;
@@ -18,13 +18,11 @@ namespace MCI {
   }
 }
 "@
-
 function Invoke-MCI($cmd) {
   $sb = New-Object System.Text.StringBuilder 512
   $err = [MCI.Api]::mciSendString($cmd, $sb, 512, [IntPtr]::Zero)
   return @{ err = $err; val = $sb.ToString() }
 }
-
 while ($true) {
   $line = [Console]::ReadLine()
   if ($null -eq $line) { break }
@@ -53,7 +51,6 @@ function startBridge() {
   psProc = spawn('powershell.exe', [
     '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath
   ], { stdio: ['pipe', 'pipe', 'pipe'] });
-
   psProc.stdout.on('data', (chunk) => {
     psBuffer += chunk.toString();
     let nl;
@@ -68,7 +65,6 @@ function startBridge() {
       } catch(e) {}
     }
   });
-
   psProc.on('exit', () => {
     psProc = null;
     for (const id in pendingCalls) {
@@ -120,49 +116,57 @@ function ejectDrive(letter) {
     execFile('powershell.exe', ['-ExecutionPolicy', 'Bypass', '-File', ps1], (err, stdout, stderr) => {
       try { fs.unlinkSync(ps1); } catch(e) {}
       if (err) reject(new Error(stderr || err.message));
-      else resolve(stdout.trim());
+      else resolve();
     });
   });
 }
 
-// ─── Volume via nircmd OU wscript ──────────────────────────────────────────
-// setaudio MCI est ignoré sur Win10/11. On utilise PowerShell CoreAudio API.
+// ─── Volume CoreAudio ───────────────────────────────────────────────────────
 function setVolume(percent) {
   return new Promise((resolve) => {
-    const vol = Math.max(0, Math.min(100, percent)) / 100;
-    const script = [
+    const vol = (Math.max(0, Math.min(100, percent)) / 100).toFixed(4);
+    const lines = [
       'Add-Type -TypeDefinition @"',
+      'using System;',
       'using System.Runtime.InteropServices;',
-      '[Guid("5CDF2C82-841E-4546-9722-0CF74078229A")]',
-      '[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]',
-      'interface IAudioEndpointVolume {',
-      '  int f1(); int f2(); int f3(); int f4();',
-      '  int SetMasterVolumeLevelScalar(float f, System.Guid g);',
-      '  int f6();',
-      '  int GetMasterVolumeLevelScalar(out float f);',
-      '  int f8(); int f9(); int f10(); int f11(); int f12();',
-      '}',
-      '[Guid("D666063F-1587-4E43-81F1-B948E807363F")]',
-      '[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]',
-      'interface IMMDevice { int Activate(ref System.Guid i,int c,System.IntPtr p,out object o); int f2(); int f3(); }',
-      '[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6")]',
-      '[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]',
-      'interface IMMDeviceEnumerator { int f1(); int GetDefaultAudioEndpoint(int f,int r,out IMMDevice d); }',
       '[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]',
-      'class MMDeviceEnumeratorClass {}',
-      'public class Vol {',
-      '  public static void Set(float v){',
-      '    var e=(IMMDeviceEnumerator)new MMDeviceEnumeratorClass();',
-      '    IMMDevice d; e.GetDefaultAudioEndpoint(0,1,out d);',
-      '    var g=new System.Guid("5CDF2C82-841E-4546-9722-0CF74078229A");',
-      '    object o; d.Activate(ref g,0,System.IntPtr.Zero,out o);',
-      '    ((IAudioEndpointVolume)o).SetMasterVolumeLevelScalar(v,System.Guid.Empty);',
+      '[ClassInterface(ClassInterfaceType.None)]',
+      'class MMDeviceEnumeratorCom {}',
+      '[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]',
+      'interface IMMDeviceEnumerator {',
+      '  int NotImpl1();',
+      '  int GetDefaultAudioEndpoint(int df, int role, out IMMDevice ppEndpoint);',
+      '}',
+      '[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]',
+      'interface IMMDevice {',
+      '  int Activate(ref Guid id, int clsCtx, IntPtr p, out IAudioEndpointVolume aev);',
+      '  int NotImpl2(); int NotImpl3();',
+      '}',
+      '[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]',
+      'interface IAudioEndpointVolume {',
+      '  int NotImpl1(); int NotImpl2();',
+      '  int SetMasterVolumeLevelScalar(float fLevel, Guid pguidEventContext);',
+      '  int NotImpl3();',
+      '  int GetMasterVolumeLevelScalar(out float pfLevel);',
+      '  int NotImpl4(); int NotImpl5(); int NotImpl6(); int NotImpl7();',
+      '  int GetChannelCount(out uint pnChannelCount);',
+      '}',
+      'public static class VolCtrl {',
+      '  public static void Set(float level) {',
+      '    var e = (IMMDeviceEnumerator)new MMDeviceEnumeratorCom();',
+      '    IMMDevice d;',
+      '    e.GetDefaultAudioEndpoint(0, 1, out d);',
+      '    var g = new Guid("5CDF2C82-841E-4546-9722-0CF74078229A");',
+      '    IAudioEndpointVolume aev;',
+      '    d.Activate(ref g, 23, IntPtr.Zero, out aev);',
+      '    aev.SetMasterVolumeLevelScalar(level, Guid.Empty);',
       '  }',
       '}',
       '"@ -Language CSharp',
-      '[Vol]::Set(' + vol.toFixed(4) + ')',
+      '[VolCtrl]::Set([float]' + vol + ')',
       'Write-Output "ok"'
-    ].join('\r\n');
+    ];
+    const script = lines.join('\r\n');
     const ps1 = path.join(os.tmpdir(), 'vol_' + Date.now() + '.ps1');
     fs.writeFileSync(ps1, script, 'utf8');
     execFile('powershell.exe', ['-ExecutionPolicy', 'Bypass', '-File', ps1], () => {
@@ -172,7 +176,9 @@ function setVolume(percent) {
   });
 }
 
+
 // ─── Helpers ───────────────────────────────────────────────────────────────
+// MSF = mm:ss:ff → secondes
 function msfToSec(t) {
   if (!t) return 0;
   const p = t.trim().split(':').map(Number);
@@ -195,9 +201,7 @@ async function forceReopen() {
   await ensureOpen();
 }
 
-// Récupère la position de début d'une piste en MSF puis joue depuis là
 async function playTrack(trackNum) {
-  // "status cd position track N" retourne la position MSF de début de piste
   const pos = await mci('status cd position track ' + trackNum);
   await mci('play cd from ' + pos);
 }
@@ -284,14 +288,22 @@ ipcMain.handle('cd-command', async (event, command, arg) => {
         const mode  = await mci('status cd mode');
         const trk   = await mci('status cd current track');
         const total = await mci('status cd number of tracks');
-        const pos   = await mci('status cd position');
-        const tlen  = await mci('status cd length track ' + (parseInt(trk) || 1));
+        const trkNum = parseInt(trk) || 1;
+
+        // Position absolue sur le CD et position de début de piste
+        const posAbs      = await mci('status cd position');
+        const posTrackStart = await mci('status cd position track ' + trkNum);
+        const tlen        = await mci('status cd length track ' + trkNum);
+
+        // Temps écoulé dans la piste = position absolue − début de piste
+        const elapsed = Math.max(0, msfToSec(posAbs) - msfToSec(posTrackStart));
+
         return {
           ok: true,
           mode,
-          track:       parseInt(trk)   || 0,
+          track:       trkNum,
           numTracks:   parseInt(total) || 0,
-          position:    msfToSec(pos),
+          position:    elapsed,
           trackLength: msfToSec(tlen)
         };
 
