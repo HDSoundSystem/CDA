@@ -211,6 +211,7 @@ async function poll() {
   }
 
   highlightTrack(r.track);
+  highlightNumpad(r.track);
 
   // Detect track end: was playing, now stopped
   if (currentMode === 'playing' && r.mode === 'stopped' && r.numTracks > 0) {
@@ -290,5 +291,24 @@ volumeSlider.addEventListener('input', () => {
 });
 
 updateModeButtons();
+
+// ── Numpad ──────────────────────────────────────────────────────────────────
+document.querySelectorAll('.num-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const n = parseInt(btn.dataset.n);
+    if (lastNumTracks === 0) return;
+    const target = n > lastNumTracks ? lastNumTracks : n;
+    await send('play', target);
+    startPoll();
+    highlightNumpad(target);
+  });
+});
+
+function highlightNumpad(trackN) {
+  document.querySelectorAll('.num-btn').forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.dataset.n) === trackN);
+  });
+}
+
 startPoll();
 send('volume', parseInt(volumeSlider.value));

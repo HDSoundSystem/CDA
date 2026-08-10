@@ -9,67 +9,90 @@
 <body>
   <div class="player-container">
 
-    <div class="header">
-      <h1>CD Audio Player</h1>
-      <div class="drive-row">
-        <label for="drive-select">Drive</label>
-        <select id="drive-select">
-          <option>C:</option>
-          <option>D:</option>
-          <option>E:</option>
-          <option selected>F:</option>
-          <option>G:</option>
-          <option>H:</option>
-        </select>
+    <div class="left-panel">
+
+      <div class="header">
+        <h1>CD Audio Player</h1>
+        <div class="drive-row">
+          <label for="drive-select">Drive</label>
+          <select id="drive-select">
+            <option>C:</option>
+            <option>D:</option>
+            <option>E:</option>
+            <option selected>F:</option>
+            <option>G:</option>
+            <option>H:</option>
+          </select>
+        </div>
       </div>
-    </div>
 
-    <div class="meta-panel" id="meta-panel">
-      <div class="meta-artist" id="meta-artist"></div>
-      <div class="meta-album"  id="meta-album"></div>
-    </div>
-
-    <div class="display">
-      <div class="track-info">
-        <span class="label">Track</span>
-        <span id="track-num">--</span>
-        <span class="sep">/</span>
-        <span id="track-total">--</span>
-        <span class="track-title" id="track-title"></span>
+      <div class="meta-panel">
+        <div class="meta-artist" id="meta-artist"></div>
+        <div class="meta-album"  id="meta-album"></div>
       </div>
-      <div class="time-info">
-        <span id="time-elapsed">0:00</span>
-        <span class="time-sep"> / </span>
-        <span id="time-total">0:00</span>
+
+      <div class="display">
+        <div class="display-top">
+          <div class="track-info">
+            <span class="label">Track</span>
+            <span id="track-num">--</span>
+            <span class="sep">/</span>
+            <span id="track-total">--</span>
+            <span class="track-title" id="track-title"></span>
+          </div>
+          <div class="mode-indicators">
+            <span id="ind-shuffle"   class="mode-ind"><i class="fa-solid fa-shuffle"></i></span>
+            <span id="ind-repeat1"   class="mode-ind"><i class="fa-solid fa-repeat"></i><sup>1</sup></span>
+            <span id="ind-repeatall" class="mode-ind"><i class="fa-solid fa-repeat"></i></span>
+          </div>
+        </div>
+        <div class="time-info">
+          <span id="time-elapsed">0:00</span>
+          <span class="time-sep"> / </span>
+          <span id="time-total">0:00</span>
+        </div>
+        <div id="status-text">Insert a CD</div>
       </div>
-      <div class="mode-indicators">
-        <span id="ind-shuffle"    class="mode-ind"><i class="fa-solid fa-shuffle"></i></span>
-        <span id="ind-repeat1"    class="mode-ind"><i class="fa-solid fa-repeat"></i><sup>1</sup></span>
-        <span id="ind-repeatall"  class="mode-ind"><i class="fa-solid fa-repeat"></i></span>
+
+      <!-- Track number pad: 1-9 then 0 -->
+      <div class="numpad">
+        <button class="num-btn" data-n="1">1</button>
+        <button class="num-btn" data-n="2">2</button>
+        <button class="num-btn" data-n="3">3</button>
+        <button class="num-btn" data-n="4">4</button>
+        <button class="num-btn" data-n="5">5</button>
+        <button class="num-btn" data-n="6">6</button>
+        <button class="num-btn" data-n="7">7</button>
+        <button class="num-btn" data-n="8">8</button>
+        <button class="num-btn" data-n="9">9</button>
+        <button class="num-btn" data-n="10">10</button>
       </div>
-      <div id="status-text">Insert a CD</div>
+
+      <div class="controls">
+        <button id="btn-prev"    title="Previous track"><i class="fa-solid fa-backward-step"></i></button>
+        <button id="btn-play"    title="Play"><i class="fa-solid fa-play"></i></button>
+        <button id="btn-pause"   title="Pause"><i class="fa-solid fa-pause"></i></button>
+        <button id="btn-stop"    title="Stop"><i class="fa-solid fa-stop"></i></button>
+        <button id="btn-next"    title="Next track"><i class="fa-solid fa-forward-step"></i></button>
+        <button id="btn-shuffle" title="Shuffle" class="mode-btn"><i class="fa-solid fa-shuffle"></i></button>
+        <button id="btn-repeat"  title="Repeat" class="mode-btn"><i class="fa-solid fa-repeat"></i></button>
+        <button id="btn-eject"   title="Eject"><i class="fa-solid fa-eject"></i></button>
+      </div>
+
+      <div class="volume-row">
+        <i class="fa-solid fa-volume-low"></i>
+        <input type="range" id="volume-slider" min="0" max="100" value="80">
+        <i class="fa-solid fa-volume-high"></i>
+        <span id="volume-value">80%</span>
+      </div>
+
     </div>
 
-    <div class="tracklist-container">
-      <ul id="tracklist"></ul>
-    </div>
-
-    <div class="controls">
-      <button id="btn-prev"  title="Previous track"><i class="fa-solid fa-backward-step"></i></button>
-      <button id="btn-play"  title="Play"><i class="fa-solid fa-play"></i></button>
-      <button id="btn-pause" title="Pause"><i class="fa-solid fa-pause"></i></button>
-      <button id="btn-stop"  title="Stop"><i class="fa-solid fa-stop"></i></button>
-      <button id="btn-next"   title="Next track"><i class="fa-solid fa-forward-step"></i></button>
-      <button id="btn-shuffle" title="Shuffle" class="mode-btn"><i class="fa-solid fa-shuffle"></i></button>
-      <button id="btn-repeat"  title="Repeat" class="mode-btn"><i class="fa-solid fa-repeat"></i></button>
-      <button id="btn-eject"   title="Eject"><i class="fa-solid fa-eject"></i></button>
-    </div>
-
-    <div class="volume-row">
-      <i class="fa-solid fa-volume-low"></i>
-      <input type="range" id="volume-slider" min="0" max="100" value="80">
-      <i class="fa-solid fa-volume-high"></i>
-      <span id="volume-value">80%</span>
+    <div class="right-panel">
+      <div class="tracklist-header">Tracklist</div>
+      <div class="tracklist-container">
+        <ul id="tracklist"></ul>
+      </div>
     </div>
 
   </div>
