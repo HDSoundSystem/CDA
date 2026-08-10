@@ -3,6 +3,7 @@ const path = require('path');
 const { spawn, execFile } = require('child_process');
 const os = require('os');
 const fs = require('fs');
+const https = require('https');
 
 let DRIVE = 'F';
 
@@ -32,8 +33,8 @@ while ($true) {
   if ($line -eq '') { continue }
   try {
     $req = $line | ConvertFrom-Json
-      $r = Invoke-MCI $req.cmd
-      Write-Output ((@{ id = $req.id; err = $r.err; val = $r.val }) | ConvertTo-Json -Compress)
+    $r = Invoke-MCI $req.cmd
+    Write-Output ((@{ id = $req.id; err = $r.err; val = $r.val }) | ConvertTo-Json -Compress)
   } catch {
     Write-Output ((@{ id = 0; err = -1; val = $_.ToString() }) | ConvertTo-Json -Compress)
   }
@@ -90,8 +91,8 @@ function mci(cmd) {
   });
 }
 
+// ─── Volume via nircmd ─────────────────────────────────────────────────────
 function sendVolume(level) {
-  // nircmd setsysvolume: 0-65535
   const val = Math.round((Math.max(0, Math.min(100, level)) / 100) * 65535);
   const nircmd = path.join(__dirname, 'nircmd.exe');
   return new Promise((resolve) => {
@@ -99,7 +100,7 @@ function sendVolume(level) {
   });
 }
 
-// ─── Eject (one-shot PS) ───────────────────────────────────────────────────
+// ─── Eject ─────────────────────────────────────────────────────────────────
 function ejectDrive(letter) {
   return new Promise((resolve, reject) => {
     const lines = [
@@ -141,6 +142,13 @@ function msfToSec(t) {
   return (p[0] || 0) * 60 + (p[1] || 0);
 }
 
+// MSF string "mm:ss:ff" → frames (1 frame = 1/75 sec)
+function msfToFrames(t) {
+  if (!t) return 0;
+  const p = t.trim().split(':').map(Number);
+  return (p[0] || 0) * 60 * 75 + (p[1] || 0) * 75 + (p[2] || 0);
+}
+
 let cdReady = false;
 
 async function ensureOpen() {
@@ -162,11 +170,101 @@ async function playTrack(trackNum) {
   await mci('play cd from ' + pos);
 }
 
+// ─── MusicBrainz disc ID calculation ───────────────────────────────────────
+// Spec: https://musicbrainz.org/doc/Disc_ID_Calculation
+function calcDiscId(firstTrack, lastTrack, trackOffsets, leadoutOffset) {
+  // trackOffsets: array of frame offsets for each track (1-based, index 0 = track 1)
+  // leadoutOffset: frame offset of leadout track
+  const crypto = require('crypto');
+
+  // Build the 804-byte input string
+  let str = '';
+  str += firstTrack.toString(16).toUpperCase().padStart(2, '0');
+  str += lastTrack.toString(16).toUpperCase().padStart(2, '0');
+  // Leadout offset (slot 0)
+  str += leadoutOffset.toString(16).toUpperCase().padStart(8, '0');
+  // Track offsets slots 1-99
+  for (let i = 0; i < 99; i++) {
+    const offset = i < trackOffsets.length ? trackOffsets[i] : 0;
+    str += offset.toString(16).toUpperCase().padStart(8, '0');
+  }
+
+  const hash = crypto.createHash('sha1').update(str, 'ascii').digest('base64');
+  // MusicBrainz uses a modified base64: + → ., / → _, = → -
+  return hash.replace(/\+/g, '.').replace(/\//g, '_').replace(/=/g, '-');
+}
+
+async function getTOC() {
+  await ensureOpen();
+  const numTracks = parseInt(await mci('status cd number of tracks')) || 0;
+  if (numTracks === 0) return null;
+
+  // MCI already returns frames including the 2-second pregap — do NOT add 150
+  const offsets = [];
+  for (let i = 1; i <= numTracks; i++) {
+    const pos = await mci('status cd position track ' + i);
+    offsets.push(msfToFrames(pos));
+  }
+
+  // Leadout = first track offset + total CD length
+  const firstPos  = await mci('status cd position track 1');
+  const totalLen  = await mci('status cd length');
+  const leadout   = msfToFrames(firstPos) + msfToFrames(totalLen);
+
+  const discId = calcDiscId(1, numTracks, offsets, leadout);
+  return { discId, numTracks, offsets, leadout };
+}
+
+// ─── MusicBrainz API lookup ────────────────────────────────────────────────
+function httpGet(url) {
+  return new Promise((resolve, reject) => {
+    const opts = new URL(url);
+    const req = https.get({
+      hostname: opts.hostname,
+      path: opts.pathname + opts.search,
+      headers: { 'User-Agent': 'CDA-Electron/1.0 ( yohann@example.com )' }
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => resolve(data));
+    });
+    req.on('error', reject);
+    req.setTimeout(8000, () => { req.destroy(); reject(new Error('Timeout')); });
+  });
+}
+
+async function lookupMusicBrainz(discId) {
+  const url = `https://musicbrainz.org/ws/2/discid/${discId}?fmt=json&inc=artists+recordings`;
+  const raw = await httpGet(url);
+  const data = JSON.parse(raw);
+
+  if (!data.releases || data.releases.length === 0) return null;
+
+  const release = data.releases[0];
+  const artist  = release['artist-credit']?.[0]?.artist?.name || 'Unknown Artist';
+  const album   = release.title || 'Unknown Album';
+  const date    = release.date || '';
+
+  // Flatten all tracks from all media
+  const tracks = [];
+  for (const medium of (release.media || [])) {
+    for (const track of (medium.tracks || [])) {
+      tracks.push({
+        number: track.number,
+        title:  track.title || ('Track ' + track.number),
+        length: track.length // ms
+      });
+    }
+  }
+
+  return { artist, album, date, tracks, discId };
+}
+
 // ─── Window ────────────────────────────────────────────────────────────────
 function createWindow() {
   startBridge();
   const win = new BrowserWindow({
-    width: 650, height: 540,
+    width: 680, height: 600,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -254,6 +352,17 @@ ipcMain.handle('cd-command', async (event, command, arg) => {
           position:    elapsed,
           trackLength: msfToSec(tlen)
         };
+
+      case 'lookup':
+        const toc = await getTOC();
+        if (!toc) return { ok: false, error: 'No CD found' };
+        try {
+          const meta = await lookupMusicBrainz(toc.discId);
+          if (!meta) return { ok: true, found: false, discId: toc.discId };
+          return { ok: true, found: true, ...meta };
+        } catch(e) {
+          return { ok: true, found: false, discId: toc.discId, error: e.message };
+        }
 
       case 'reload':
         await forceReopen();

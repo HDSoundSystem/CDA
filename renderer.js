@@ -1,15 +1,20 @@
 const statusText   = document.getElementById('status-text');
 const trackNum     = document.getElementById('track-num');
 const trackTotal   = document.getElementById('track-total');
+const trackTitle   = document.getElementById('track-title');
 const timeElapsed  = document.getElementById('time-elapsed');
 const timeTotal    = document.getElementById('time-total');
 const volumeSlider = document.getElementById('volume-slider');
 const volumeValue  = document.getElementById('volume-value');
 const driveSelect  = document.getElementById('drive-select');
+const metaArtist   = document.getElementById('meta-artist');
+const metaAlbum    = document.getElementById('meta-album');
+const tracklist    = document.getElementById('tracklist');
 
 let pollInterval  = null;
 let currentMode   = '';
 let lastNumTracks = 0;
+let trackMeta     = []; // [{title, length}] indexed by track number (1-based, index 0 unused)
 
 function fmt(sec) {
   const s = Math.floor(sec);
@@ -30,9 +35,59 @@ async function send(cmd, arg) {
 function resetDisplay() {
   trackNum.innerText    = '--';
   trackTotal.innerText  = '--';
+  trackTitle.innerText  = '';
   timeElapsed.innerText = '0:00';
   timeTotal.innerText   = '0:00';
   lastNumTracks = 0;
+  trackMeta = [];
+  metaArtist.innerText = '';
+  metaAlbum.innerText  = '';
+  tracklist.innerHTML  = '';
+}
+
+function buildTracklist(tracks, numTracks) {
+  tracklist.innerHTML = '';
+  for (let i = 1; i <= numTracks; i++) {
+    const li = document.createElement('li');
+    li.dataset.track = i;
+    const meta = tracks[i];
+    const title = meta ? meta.title : 'Track ' + i;
+    const len   = meta && meta.length ? ' <span class="tl-time">' + fmt(meta.length / 1000) + '</span>' : '';
+    li.innerHTML = '<span class="tl-num">' + i + '</span><span class="tl-title">' + title + '</span>' + len;
+    li.addEventListener('click', () => {
+      send('play', i);
+      startPoll();
+      highlightTrack(i);
+    });
+    tracklist.appendChild(li);
+  }
+}
+
+function highlightTrack(n) {
+  tracklist.querySelectorAll('li').forEach(li => {
+    li.classList.toggle('active', parseInt(li.dataset.track) === n);
+  });
+}
+
+async function lookupCD(numTracks) {
+  statusText.innerText = 'Looking up CD...';
+  const r = await send('lookup');
+  if (!r.ok) return;
+  if (!r.found) {
+    statusText.innerText = 'CD not found in MusicBrainz';
+    buildTracklist({}, numTracks);
+    return;
+  }
+  metaArtist.innerText = r.artist;
+  metaAlbum.innerText  = r.album + (r.date ? '  (' + r.date.slice(0, 4) + ')' : '');
+
+  // Index tracks by number
+  trackMeta = [];
+  for (const t of r.tracks) {
+    trackMeta[parseInt(t.number)] = t;
+  }
+  buildTracklist(trackMeta, numTracks);
+  statusText.innerText = 'CD ready — ' + numTracks + ' tracks';
 }
 
 async function poll() {
@@ -40,8 +95,14 @@ async function poll() {
   if (!r.ok) return;
   currentMode = r.mode;
 
+  // CD inserted
   if (r.numTracks > 0 && lastNumTracks === 0) {
-    statusText.innerText = r.numTracks + ' track(s) detected';
+    await lookupCD(r.numTracks);
+  }
+  // CD removed
+  if (r.numTracks === 0 && lastNumTracks > 0) {
+    resetDisplay();
+    statusText.innerText = 'No CD detected';
   }
   lastNumTracks = r.numTracks;
 
@@ -49,6 +110,15 @@ async function poll() {
   trackTotal.innerText  = r.numTracks > 0 ? r.numTracks : '--';
   timeElapsed.innerText = r.position    > 0 ? fmt(r.position)    : '0:00';
   timeTotal.innerText   = r.trackLength > 0 ? fmt(r.trackLength) : '0:00';
+
+  // Update track title from meta
+  if (r.track && trackMeta[r.track]) {
+    trackTitle.innerText = trackMeta[r.track].title;
+  } else if (r.track) {
+    trackTitle.innerText = '';
+  }
+
+  highlightTrack(r.track);
 
   if      (r.mode === 'playing') statusText.innerText = 'Playing';
   else if (r.mode === 'paused')  statusText.innerText = 'Paused';
@@ -87,12 +157,8 @@ document.getElementById('btn-play').addEventListener('click', async () => {
 });
 
 document.getElementById('btn-pause').addEventListener('click', async () => {
-  if (currentMode === 'paused') {
-    await send('resume');
-  } else {
-    await send('pause');
-    statusText.innerText = 'Paused';
-  }
+  if (currentMode === 'paused') await send('resume');
+  else { await send('pause'); statusText.innerText = 'Paused'; }
 });
 
 document.getElementById('btn-stop').addEventListener('click', async () => {
@@ -103,12 +169,12 @@ document.getElementById('btn-stop').addEventListener('click', async () => {
 
 document.getElementById('btn-prev').addEventListener('click', async () => {
   const r = await send('prev');
-  if (r.ok) { statusText.innerText = 'Track ' + r.track; startPoll(); }
+  if (r.ok) { startPoll(); }
 });
 
 document.getElementById('btn-next').addEventListener('click', async () => {
   const r = await send('next');
-  if (r.ok) { statusText.innerText = 'Track ' + r.track; startPoll(); }
+  if (r.ok) { startPoll(); }
 });
 
 document.getElementById('btn-eject').addEventListener('click', async () => {
@@ -119,13 +185,11 @@ document.getElementById('btn-eject').addEventListener('click', async () => {
   statusText.innerText = 'Tray open';
 });
 
-// Volume — send immediately on every input event
 volumeSlider.addEventListener('input', () => {
   const v = parseInt(volumeSlider.value);
   volumeValue.innerText = v + '%';
   send('volume', v);
 });
 
-// Init
 startPoll();
 send('volume', parseInt(volumeSlider.value));
