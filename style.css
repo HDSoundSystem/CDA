@@ -180,6 +180,26 @@ h1 {
 }
 .controls button:hover  { background: #444; }
 .controls button:active { background: #f0c040; color: #111; transform: scale(0.95); }
+.controls button.mode-btn       { color: #666; }
+.controls button.mode-btn.on    { color: #f0c040; background: #3a3000; }
+.controls button.mode-btn.on-2  { color: #f0c040; background: #3a3000; }
+
+/* Mode indicators inside display */
+.mode-indicators {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+.mode-ind {
+  font-size: 0.7rem;
+  color: #333;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  transition: color 0.15s;
+}
+.mode-ind sup { font-size: 0.6rem; line-height: 1; }
+.mode-ind.active { color: #f0c040; }
 
 /* Volume */
 .volume-row {

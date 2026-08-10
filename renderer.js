@@ -16,6 +16,98 @@ let currentMode   = '';
 let lastNumTracks = 0;
 let trackMeta     = []; // [{title, length}] indexed by track number (1-based, index 0 unused)
 
+// Playback modes
+// repeat: 0 = off, 1 = repeat one, 2 = repeat all
+let shuffle = false;
+let repeat  = 0; // 0 | 1 | 2
+let shuffleOrder  = [];
+let shuffleIndex  = 0;
+
+const btnShuffle = document.getElementById('btn-shuffle');
+const btnRepeat  = document.getElementById('btn-repeat');
+
+const indShuffle   = document.getElementById('ind-shuffle');
+const indRepeat1   = document.getElementById('ind-repeat1');
+const indRepeatAll = document.getElementById('ind-repeatall');
+
+function updateModeButtons() {
+  btnShuffle.classList.toggle('on', shuffle);
+  btnRepeat.classList.remove('on', 'on-2');
+
+  indShuffle.classList.toggle('active', shuffle);
+  indRepeat1.classList.remove('active');
+  indRepeatAll.classList.remove('active');
+
+  if (repeat === 1) {
+    btnRepeat.classList.add('on');
+    btnRepeat.title = 'Repeat One';
+    indRepeat1.classList.add('active');
+  } else if (repeat === 2) {
+    btnRepeat.classList.add('on-2');
+    btnRepeat.title = 'Repeat All';
+    indRepeatAll.classList.add('active');
+  } else {
+    btnRepeat.title = 'Repeat';
+  }
+}
+
+function buildShuffleOrder(numTracks, currentTrack) {
+  shuffleOrder = [];
+  for (let i = 1; i <= numTracks; i++) if (i !== currentTrack) shuffleOrder.push(i);
+  // Fisher-Yates shuffle
+  for (let i = shuffleOrder.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffleOrder[i], shuffleOrder[j]] = [shuffleOrder[j], shuffleOrder[i]];
+  }
+  shuffleOrder.unshift(currentTrack); // current track first
+  shuffleIndex = 0;
+}
+
+btnShuffle.addEventListener('click', () => {
+  shuffle = !shuffle;
+  if (shuffle && lastNumTracks > 0) buildShuffleOrder(lastNumTracks, parseInt(trackNum.innerText) || 1);
+  updateModeButtons();
+});
+
+// Cycle: off → repeat one → repeat all → off
+btnRepeat.addEventListener('click', () => {
+  repeat = (repeat + 1) % 3;
+  // Update icon
+  if (repeat === 1) btnRepeat.querySelector('i').className = 'fa-solid fa-repeat';
+  if (repeat === 2) btnRepeat.querySelector('i').className = 'fa-solid fa-repeat';
+  if (repeat === 0) btnRepeat.querySelector('i').className = 'fa-solid fa-repeat';
+  updateModeButtons();
+});
+
+// Called when a track ends (mode switches from playing to stopped)
+async function onTrackEnd(currentTrack, numTracks) {
+  if (repeat === 1) {
+    // Repeat current track
+    await send('play', currentTrack);
+    startPoll();
+    return;
+  }
+  if (shuffle) {
+    shuffleIndex++;
+    if (shuffleIndex >= shuffleOrder.length) {
+      if (repeat === 2) buildShuffleOrder(numTracks, shuffleOrder[0]);
+      else return; // end of shuffled playlist
+    }
+    const next = shuffleOrder[shuffleIndex];
+    await send('play', next);
+    startPoll();
+    return;
+  }
+  // Normal sequential
+  if (currentTrack < numTracks) {
+    await send('play', currentTrack + 1);
+    startPoll();
+  } else if (repeat === 2) {
+    await send('play', 1);
+    startPoll();
+  }
+}
+
 function fmt(sec) {
   const s = Math.floor(sec);
   return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
@@ -120,6 +212,12 @@ async function poll() {
 
   highlightTrack(r.track);
 
+  // Detect track end: was playing, now stopped
+  if (currentMode === 'playing' && r.mode === 'stopped' && r.numTracks > 0) {
+    await onTrackEnd(r.track, r.numTracks);
+    return;
+  }
+
   if      (r.mode === 'playing') statusText.innerText = 'Playing';
   else if (r.mode === 'paused')  statusText.innerText = 'Paused';
   else if (r.mode === 'stopped') statusText.innerText = 'Stopped';
@@ -191,5 +289,6 @@ volumeSlider.addEventListener('input', () => {
   send('volume', v);
 });
 
+updateModeButtons();
 startPoll();
 send('volume', parseInt(volumeSlider.value));
