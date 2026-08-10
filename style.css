@@ -168,6 +168,18 @@ h1 {
 .num-btn:active { background: #f0c040; color: #111; }
 .num-btn.active { color: #f0c040; border: 1px solid #f0c04044; }
 
+.numpad-tens {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  font-size: 0.7rem;
+  color: #333;
+  transition: color 0.2s;
+  flex-shrink: 0;
+}
+.numpad-tens.active { color: #e03030; }
+
 /* ── Controls ────────────────────────────────────────── */
 .controls {
   display: flex;

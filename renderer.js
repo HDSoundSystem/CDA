@@ -251,8 +251,13 @@ driveSelect.addEventListener('change', async () => {
 
 document.getElementById('btn-play').addEventListener('click', async () => {
   statusText.innerText = 'Starting...';
-  const r = await send('play');
-  if (r.ok) startPoll();
+  if (shuffle && lastNumTracks > 0) {
+    buildShuffleOrder(lastNumTracks, 1);
+    await send('play', shuffleOrder[0]);
+  } else {
+    await send('play');
+  }
+  startPoll();
 });
 
 document.getElementById('btn-pause').addEventListener('click', async () => {
@@ -267,13 +272,27 @@ document.getElementById('btn-stop').addEventListener('click', async () => {
 });
 
 document.getElementById('btn-prev').addEventListener('click', async () => {
-  const r = await send('prev');
-  if (r.ok) { startPoll(); }
+  if (shuffle && shuffleOrder.length > 0) {
+    shuffleIndex = Math.max(0, shuffleIndex - 1);
+    const t = shuffleOrder[shuffleIndex];
+    await send('play', t);
+    startPoll();
+  } else {
+    const r = await send('prev');
+    if (r.ok) startPoll();
+  }
 });
 
 document.getElementById('btn-next').addEventListener('click', async () => {
-  const r = await send('next');
-  if (r.ok) { startPoll(); }
+  if (shuffle && shuffleOrder.length > 0) {
+    shuffleIndex = (shuffleIndex + 1) % shuffleOrder.length;
+    const t = shuffleOrder[shuffleIndex];
+    await send('play', t);
+    startPoll();
+  } else {
+    const r = await send('next');
+    if (r.ok) startPoll();
+  }
 });
 
 document.getElementById('btn-eject').addEventListener('click', async () => {
@@ -293,21 +312,63 @@ volumeSlider.addEventListener('input', () => {
 updateModeButtons();
 
 // ── Numpad ──────────────────────────────────────────────────────────────────
+// Digit accumulation: press 1 then 0 within 1.5s = track 10
+let numpadBuffer = '';
+let numpadTimer  = null;
+
+async function commitNumpad() {
+  const n = parseInt(numpadBuffer);
+  numpadBuffer = '';
+  if (!n || lastNumTracks === 0) return;
+  const target = Math.min(n, lastNumTracks);
+  await send('play', target);
+  startPoll();
+  highlightNumpad(target);
+}
+
 document.querySelectorAll('.num-btn').forEach(btn => {
-  btn.addEventListener('click', async () => {
-    const n = parseInt(btn.dataset.n);
-    if (lastNumTracks === 0) return;
-    const target = n > lastNumTracks ? lastNumTracks : n;
-    await send('play', target);
-    startPoll();
-    highlightNumpad(target);
+  btn.addEventListener('click', () => {
+    const digit = btn.dataset.n; // '0'-'9'
+    clearTimeout(numpadTimer);
+
+    if (digit === '0' && numpadBuffer === '') {
+      // 0 alone = track 10
+      numpadBuffer = '10';
+      commitNumpad();
+      return;
+    }
+
+    numpadBuffer += digit;
+
+    // If two digits entered, commit immediately
+    if (numpadBuffer.length >= 2) {
+      commitNumpad();
+      return;
+    }
+
+    // Wait 1.5s for a second digit
+    numpadTimer = setTimeout(commitNumpad, 1500);
   });
 });
 
+const numpadTens = document.getElementById('numpad-tens');
+
 function highlightNumpad(trackN) {
   document.querySelectorAll('.num-btn').forEach(btn => {
-    btn.classList.toggle('active', parseInt(btn.dataset.n) === trackN);
+    const d = btn.dataset.n;
+    let active = false;
+    if (trackN > 0 && trackN < 10) {
+      // Single digit: highlight matching button (never 0)
+      active = d === String(trackN);
+    } else if (trackN >= 10) {
+      // Double digit: highlight units digit only if non-zero, never highlight 0
+      const units = trackN % 10;
+      active = units !== 0 && d === String(units);
+    }
+    btn.classList.toggle('active', active);
   });
+  // Arrow lights up red when track >= 10
+  numpadTens.classList.toggle('active', trackN >= 10);
 }
 
 startPoll();
