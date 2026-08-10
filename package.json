@@ -1,5 +1,5 @@
 {
-  "name": "mon-lecteur-cd",
+  "name": "CD-Audio-PLayer",
   "version": "1.0.0",
   "main": "main.js",
   "scripts": {
@@ -11,12 +11,13 @@
     "electron-builder": "^24.13.3"
   },
   "build": {
-    "appId": "com.example.cdplayer",
-    "productName": "Lecteur CD Audio",
+    "appId": "com.hdsoundsystem.cdplayer",
+    "productName": "CD Audio PLayer",
     "win": {
       "target": [
-        "nsis"
-      ]
+        "portable"
+      ],
+      "icon": "assets/icon.ico"
     },
     "directories": {
       "output": "dist"
